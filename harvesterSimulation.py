@@ -1,16 +1,15 @@
 import argparse
-import logging
-import pathlib
 import csv
 import traceback
 from enum import Enum
 import time
 from datetime import datetime
 from collections import OrderedDict
-import bisect
 import json
 import math
 import random
+from typing import Union
+import os
 
 class harvester():
     simulationStep = 300 # 5*60
@@ -29,6 +28,7 @@ class harvester():
     windData = None
     windDataKeys = []
     trafficData = None
+    trafficDataKeys = []
     simulationStart = None
     simulationEnd = None
     skyParameter = None
@@ -40,21 +40,28 @@ class harvester():
     capacity = 1 # Wh
     
     def __init__(self) -> None:
+
+        os.system("")
         parser = argparse.ArgumentParser(description='TODO')
         parser.add_argument('-i', '--insolation', help='Input CSV file with insolation data.')
+        parser.add_argument('-w', '--wind', help='Input CSV file with wind speed data.')
         parser.add_argument('-s', '--start', help='Simulation start time (unix timestamp)')
         parser.add_argument('-e', '--end', help='Simulation end time (unix timestamp).')
         args = parser.parse_args()
 
         self.simulationEnd = int(time.time())
-        self.simulationStart = self.simulationEnd - 2628000 * 3
+        #self.simulationStart = self.simulationEnd - 2628000 * 3
         self.skyParameter = typeOfSkyProblem.TOA
 
         if args.insolation:
             self.CSVFileName = str(args.insolation)
+        if args.wind:
+            self.windCSVFileName = str(args.wind)
+        if args.start:
+            self.simulationStart = int(args.start)
+        if args.end:
+            self.simulationEnd = int(args.end)
         
-        self.windCSVFileName = 'wind_2022_02_01-2022_05_15.csv'
-        #self.CSVFileName = 'test.csv'
         self.run()
 
 
@@ -70,6 +77,7 @@ class harvester():
 
         if ((self.simulationEnd - self.simulationStart) % self.simulationStep) != 0:
             self.simulationStart = self.simulationStart - (self.simulationEnd - self.simulationStart) % self.simulationStep
+        print(style.MAGENTA + "Simulation in the range of {0} to {1}".format(datetime.fromtimestamp(self.simulationStart), datetime.fromtimestamp(self.simulationEnd)) + style.RESET)
         for i in range(self.simulationStart, self.simulationEnd + self.simulationStep, self.simulationStep):
             self.batteryLvl[i] = 0
             self.insolationData[i] = 0
@@ -93,16 +101,20 @@ class harvester():
     def run(self) -> None:
         self.initializeDicts()
         self.readInsolationCSV()
-        self.readWindCSV()
+        #self.readWindCSV()
         self.generateTraffic()
-        self.calculatePowerUsage()
+        #self.calculatePowerUsage()
         self.combineSources()
         self.saveResultsToFile()
 
     def readInsolationCSV(self) -> None:
+        startTime = time.time()
+        print(style.YELLOW + "Starting reading insolation data" + style.RESET)
         if self.CSVFileName is not None:
             with open(self.CSVFileName, 'r') as r_obj:
                 csv_reader = csv.reader(r_obj, delimiter=';')
+                num = None
+                lastItemIdx = None
                 for row in csv_reader:
                     if row[0][0] != "#":
                         timeLimits = row[0].split('/')
@@ -110,15 +122,26 @@ class harvester():
                         timeLimits[1] = timeLimits[1].split('.')[0]
                         observationPeriodStart = datetime.strptime(timeLimits[0], "%Y-%m-%dT%H:%M:%S").timestamp()
                         observationPeriodEnd = datetime.strptime(timeLimits[1], "%Y-%m-%dT%H:%M:%S").timestamp()
-                        timestampBetween = self.between(self.insolationDataKeys, observationPeriodStart, observationPeriodEnd)
+                        if lastItemIdx is None:
+                            timestampBetween = self.between(self.insolationDataKeys, observationPeriodStart, observationPeriodEnd)
+                            num = len(timestampBetween)
+                            if num > 0:
+                                lastItemIdx = self.insolationDataKeys.index(timestampBetween[-1])
+                        else:
+                            timestampBetween = self.between(self.insolationDataKeys[lastItemIdx : lastItemIdx + num + 5], observationPeriodStart, observationPeriodEnd)
+                            if len(timestampBetween) > 0:
+                                lastItemIdx = self.insolationDataKeys.index(timestampBetween[-1])
                         for i in timestampBetween:
                             acquiredEnergy = float(row[self.skyParameter]) * (self.simulationStep / 3600) * self.solarPaneArea * self.solarPaneEfficiency
                             self.insolationData[i] = acquiredEnergy
+            print(style.GREEN + "Loaded insolation data in {0} seconds.".format(time.time() - startTime) + style.RESET)
         else:
             raise NotImplementedError
 
     def readWindCSV(self) -> None:
         if self.windCSVFileName is not None:
+            startTime = time.time()
+            print(style.YELLOW + "Starting reading wind data" + style.RESET)
             with open(self.windCSVFileName ,'r') as r_obj:
                 csv_reader = csv.reader(r_obj, delimiter=',')
                 for row in csv_reader:
@@ -134,17 +157,26 @@ class harvester():
                         else:
                             acquiredEnergy = 0
                         self.windData[i] = acquiredEnergy
+            print(style.GREEN + "Loaded wind data in {0} seconds.".format(time.time() - startTime) + style.RESET)
 
     def generateTraffic(self) -> None:
+        startTime = time.time()
+        print(style.YELLOW + "Starting generating traffic" + style.RESET)
         transmisionTimestamp = self.simulationStart
         intervalBetweenTransmissions = int(random.gauss(self.simulationStep, self.simulationStep))
         if intervalBetweenTransmissions < 0:
             intervalBetweenTransmissions = 0
         while (transmisionTimestamp + intervalBetweenTransmissions <= self.simulationEnd):
+            intervalBetweenTransmissions = int(random.gauss(self.simulationStep, self.simulationStep))
+            if intervalBetweenTransmissions < 0:
+                intervalBetweenTransmissions = 0
             payloadSize = random.paretovariate(1.5)
-            self.trafficData[transmisionTimestamp] = payloadSize * 1024 #kB
+            self.trafficData[transmisionTimestamp] = payloadSize * 1024 * 100 #kB
             transmisionTimestamp = transmisionTimestamp + intervalBetweenTransmissions
-
+        
+        self.trafficDataKeys = [*self.trafficData]
+        print(style.GREEN + "Traffic data has been generated in {0} seconds.".format(time.time() - startTime) + style.RESET)
+        print(len(self.trafficDataKeys))
         
 
     def degradateBattery(self, i: int) -> None:
@@ -173,23 +205,57 @@ class harvester():
         except KeyError:
             self.batteryCapacity[i+self.simulationStep] = self.batteryCapacity[i]
 
-    def calculatePowerUsage(self) -> None:
-        socEnergyUsageSleepMode = 2.35 * 3 * 0.000001 * 5 # 2.35uA * 3V * 5 minutes in Wh
-        o = 0
-        for i in range(self.simulationStart, self.simulationEnd + self.simulationStep, self.simulationStep):
-            o = o + 1
-            calculatedUsage = None
-            if (o % 3) == 0:
-                calculatedUsage = socEnergyUsageSleepMode
-            else:
-                calculatedUsage = socEnergyUsageSleepMode + ((8.3 + 10.8) * 3 * 0.0001) * 5 * 10
-            self.socEnergyUsage[i] = calculatedUsage
+    def calculatePower2(self, payloadSize: float, availableTime: int, batteryLvl: int, batteryCapacity: int) -> Union[float, float]:
+        socPowerUsageSleepMode = 2.35 * 3 * 0.00001 # 2.35uA * 3V
+        socPowerUsageCPU = (3.3 + 6.3) * 3 * 0.001
+        socPowerUsage1Mbps = 10.8 * 3 * 0.001 + socPowerUsageCPU
+        queuedPayload = 0
+        transmissionTime = payloadSize * 8 / 1000
+        if transmissionTime > availableTime:
+            transmissionTime = availableTime
+        socEnergyUsage = socPowerUsage1Mbps * transmissionTime / 3600
+        socEnergyUsage = socEnergyUsage + availableTime * socPowerUsageSleepMode
+        if batteryLvl < 5:
+            availableEnergy = 0
+        else:
+            availableEnergy = (batteryLvl - 5) * batteryCapacity
+        if socEnergyUsage > availableEnergy:
+            transmittedData = availableEnergy / socPowerUsage1Mbps * 3600 / transmissionTime
+            queuedPayload = payloadSize - transmittedData
+            socEnergyUsage = availableEnergy
+        relativeEnergyUsage = socEnergyUsage / batteryCapacity
+        return relativeEnergyUsage, queuedPayload
 
     def combineSources(self) -> None:
+        queuedTransmissions = []
+        startTime = time.time()
+        print(style.YELLOW + "Data source merge started" + style.RESET)
         for i in range(self.simulationStart, self.simulationEnd + self.simulationStep, self.simulationStep):
-            if (self.batteryLvl[i] < 5):
-                self.isOperational[i] = 0
-            else:
+            transmissionsBetween = self.between(self.trafficDataKeys, i, i + self.simulationStep)
+            availableTime = self.simulationStep
+            for t in transmissionsBetween:
+                if (self.batteryLvl[i] <= 5):
+                    self.isOperational[i] = 0
+                    queuedTransmissions.append(self.trafficData[t])
+                else:
+                    # send queued data first
+                    newQueuedTransmissions = []
+                    for q in queuedTransmissions:
+                        relativeEnergyUsage, queuedPayload = self.calculatePower2(q, availableTime, self.batteryLvl[i], self.batteryCapacity[i])
+                        self.batteryLvl[i] = self.batteryLvl[i] - relativeEnergyUsage
+                        #if queuedPayload == 0:
+                        #    queuedTransmissions = queuedTransmissions[1:]
+                        if queuedPayload > 0:
+                            #queuedTransmissions = queuedTransmissions[1:]
+                            #queuedTransmissions.insert(0, queuedPayload)
+                            newQueuedTransmissions.append(queuedPayload)
+                    relativeEnergyUsage, queuedPayload = self.calculatePower2(self.trafficData[t], availableTime, self.batteryLvl[i], self.batteryCapacity[i])
+                    self.batteryLvl[i] = self.batteryLvl[i] - relativeEnergyUsage
+                    if queuedPayload > 0:
+                        #queuedTransmissions.insert(0, queuedPayload)
+                        newQueuedTransmissions.append(queuedPayload)
+
+
                 relativeBatteryUsage = self.socEnergyUsage[i] / self.batteryCapacity[i]
                 if relativeBatteryUsage < self.batteryLvl[i]:
                     self.batteryLvl[i] = self.batteryLvl[i] - relativeBatteryUsage
@@ -202,6 +268,8 @@ class harvester():
                 self.batteryLvl[i + self.simulationStep] = 100
             else:
                 self.batteryLvl[i + self.simulationStep] = self.batteryLvl[i] + relativeNewEnergy
+        print(len(queuedTransmissions))
+        print(style.GREEN + "Data source merge ended in {0} seconds.".format(time.time() - startTime) + style.RESET)
 
     def between(self, l1, low, high):
         l2 = []
@@ -266,12 +334,6 @@ class harvester():
             writer.writerow(csv_columns)
             for data in self.trafficData.items():
                 writer.writerow(data)              
-        """with open('batLvl.csv', 'w') as csvfile:
-            csv_columns = ['timestamp','value']
-            writer = DictWriter(csvfile, fieldnames=csv_columns)
-            writer.writeheader()
-            for k, v in self.batteryLvl.items(): # without items you have only access to keys here
-                writer.writerow('keys': k, 'values': v)"""
 
 class typeOfSkyProblem():
     TOA = 1
@@ -283,6 +345,18 @@ class typeOfSkyProblem():
     BHI = 7
     DHI = 8
     BNI = 9
+
+class style():
+    BLACK = '\033[30m'
+    RED = '\033[31m'
+    GREEN = '\033[32m'
+    YELLOW = '\033[33m'
+    BLUE = '\033[34m'
+    MAGENTA = '\033[35m'
+    CYAN = '\033[36m'
+    WHITE = '\033[37m'
+    UNDERLINE = '\033[4m'
+    RESET = '\033[0m'
 
 if __name__ == "__main__":
     harvester = harvester()

@@ -51,7 +51,7 @@ class harvester():
 
         self.simulationEnd = int(time.time())
         #self.simulationStart = self.simulationEnd - 2628000 * 3
-        self.skyParameter = typeOfSkyProblem.TOA
+        self.skyParameter = typeOfSkyProblem.GHI
 
         if args.insolation:
             self.CSVFileName = str(args.insolation)
@@ -131,6 +131,8 @@ class harvester():
                             timestampBetween = self.between(self.insolationDataKeys[lastItemIdx : lastItemIdx + num + 5], observationPeriodStart, observationPeriodEnd)
                             if len(timestampBetween) > 0:
                                 lastItemIdx = self.insolationDataKeys.index(timestampBetween[-1])
+                            else:
+                                lastItemIdx = None
                         for i in timestampBetween:
                             acquiredEnergy = float(row[self.skyParameter]) * (self.simulationStep / 3600) * self.solarPaneArea * self.solarPaneEfficiency
                             self.insolationData[i] = acquiredEnergy
@@ -167,7 +169,7 @@ class harvester():
         if intervalBetweenTransmissions < 0:
             intervalBetweenTransmissions = 0
         while (transmisionTimestamp + intervalBetweenTransmissions <= self.simulationEnd):
-            intervalBetweenTransmissions = int(random.gauss(self.simulationStep, self.simulationStep))
+            intervalBetweenTransmissions = int(random.gauss(self.simulationStep / 2, self.simulationStep))
             if intervalBetweenTransmissions < 0:
                 intervalBetweenTransmissions = 0
             payloadSize = random.paretovariate(1.5)
@@ -206,7 +208,7 @@ class harvester():
             self.batteryCapacity[i+self.simulationStep] = self.batteryCapacity[i]
 
     def calculatePower2(self, payloadSize: float, availableTime: int, batteryLvl: int, batteryCapacity: int) -> Union[float, float]:
-        socPowerUsageSleepMode = 2.35 * 3 * 0.00001 # 2.35uA * 3V
+        socPowerUsageSleepMode = 2.35 * 3 * 0.000001 # 2.35uA * 3V
         socPowerUsageCPU = (3.3 + 6.3) * 3 * 0.001
         socPowerUsage1Mbps = 10.8 * 3 * 0.001 + socPowerUsageCPU
         queuedPayload = 0

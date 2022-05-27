@@ -13,6 +13,7 @@ import os
 
 class harvester():
     simulationStep = 300 # 5*60
+    outputName = None
     CSVFileName = None
     windCSVFileName = None
     batteryLvl = None
@@ -37,6 +38,11 @@ class harvester():
 
     solarPaneArea = float(0.1) # m^2
     solarPaneEfficiency = float(0.15)
+
+    AIR_DENSITY = 1.2
+    TURBINE_EFFICIENCY = 0.1
+    TURBINE_RADIUS = 0.2
+
     capacity = 1 # Wh
     
     def __init__(self) -> None:
@@ -45,12 +51,12 @@ class harvester():
         parser = argparse.ArgumentParser(description='TODO')
         parser.add_argument('-i', '--insolation', help='Input CSV file with insolation data.')
         parser.add_argument('-w', '--wind', help='Input CSV file with wind speed data.')
-        parser.add_argument('-s', '--start', help='Simulation start time (unix timestamp)')
+        parser.add_argument('-s', '--start', required=True, help='Simulation start time (unix timestamp)')
         parser.add_argument('-e', '--end', help='Simulation end time (unix timestamp).')
+        parser.add_argument('-n', '--name', required=True, help='Scenario name (output filenames prefix).')
         args = parser.parse_args()
 
         self.simulationEnd = int(time.time())
-        #self.simulationStart = self.simulationEnd - 2628000 * 3
         self.skyParameter = typeOfSkyProblem.GHI
 
         if args.insolation:
@@ -61,6 +67,8 @@ class harvester():
             self.simulationStart = int(args.start)
         if args.end:
             self.simulationEnd = int(args.end)
+        if args.name:
+            self.outputName = str(args.name)
         
         self.run()
 
@@ -101,7 +109,7 @@ class harvester():
     def run(self) -> None:
         self.initializeDicts()
         self.readInsolationCSV()
-        #self.readWindCSV()
+        self.readWindCSV()
         self.generateTraffic()
         #self.calculatePowerUsage()
         self.combineSources()
@@ -154,10 +162,7 @@ class harvester():
                     observationPeriodStart = datetime.strptime(dateTime, "%d-%m-%YT%H:%M").timestamp()
                     timestampBetween = self.between(self.windDataKeys, observationPeriodStart, observationPeriodStart + self.windCSVResolution)
                     for i in timestampBetween:
-                        if wind_speed > 4:
-                            acquiredEnergy = 15 * math.pow(1.11, wind_speed) - 10 * math.pow(1.03, 20-wind_speed) - 2 * math.log2(wind_speed) * (self.simulationStep / 3600)
-                        else:
-                            acquiredEnergy = 0
+                        acquiredEnergy = (math.pi / 2)*math.pow(self.TURBINE_RADIUS,2)*math.pow(wind_speed,3)*self.AIR_DENSITY*self.TURBINE_EFFICIENCY * (self.simulationStep / 3600)
                         self.windData[i] = acquiredEnergy
             print(style.GREEN + "Loaded wind data in {0} seconds.".format(time.time() - startTime) + style.RESET)
 
@@ -178,7 +183,7 @@ class harvester():
         
         self.trafficDataKeys = [*self.trafficData]
         print(style.GREEN + "Traffic data has been generated in {0} seconds.".format(time.time() - startTime) + style.RESET)
-        print(len(self.trafficDataKeys))
+        print('Number of generated transmissions: {0}'.format(len(self.trafficDataKeys)))
         
 
     def degradateBattery(self, i: int) -> None:
@@ -245,16 +250,11 @@ class harvester():
                     for q in queuedTransmissions:
                         relativeEnergyUsage, queuedPayload = self.calculatePower2(q, availableTime, self.batteryLvl[i], self.batteryCapacity[i])
                         self.batteryLvl[i] = self.batteryLvl[i] - relativeEnergyUsage
-                        #if queuedPayload == 0:
-                        #    queuedTransmissions = queuedTransmissions[1:]
                         if queuedPayload > 0:
-                            #queuedTransmissions = queuedTransmissions[1:]
-                            #queuedTransmissions.insert(0, queuedPayload)
                             newQueuedTransmissions.append(queuedPayload)
                     relativeEnergyUsage, queuedPayload = self.calculatePower2(self.trafficData[t], availableTime, self.batteryLvl[i], self.batteryCapacity[i])
                     self.batteryLvl[i] = self.batteryLvl[i] - relativeEnergyUsage
                     if queuedPayload > 0:
-                        #queuedTransmissions.insert(0, queuedPayload)
                         newQueuedTransmissions.append(queuedPayload)
 
 
@@ -270,7 +270,7 @@ class harvester():
                 self.batteryLvl[i + self.simulationStep] = 100
             else:
                 self.batteryLvl[i + self.simulationStep] = self.batteryLvl[i] + relativeNewEnergy
-        print(len(queuedTransmissions))
+        print('Transmissions queued at simulation end: {0}'.format(len(queuedTransmissions)))
         print(style.GREEN + "Data source merge ended in {0} seconds.".format(time.time() - startTime) + style.RESET)
 
     def between(self, l1, low, high):
@@ -281,56 +281,56 @@ class harvester():
         return l2
 
     def saveResultsToFile(self) -> None:
-        with open('result.json', 'w') as fp:
+        """with open('result.json', 'w') as fp:
             json.dump(self.batteryLvl, fp)
         with open('soc.json', 'w') as fp:
             json.dump(self.socEnergyUsage, fp)
         with open('cap.json', 'w') as fp:
-            json.dump(self.batteryCapacity, fp)
+            json.dump(self.batteryCapacity, fp)"""
 
-        with open('batLvl.csv', 'w', newline='') as csvfile:
+        with open('{0}_batLvl.csv'.format(self.outputName), 'w', newline='') as csvfile:
             csv_columns = ['timestamp','value']
             writer = csv.writer(csvfile)
             writer.writerow(csv_columns)
             for data in self.batteryLvl.items():
                 writer.writerow(data)
 
-        with open('soc.csv', 'w', newline='') as csvfile:
+        with open('{0}_soc.csv'.format(self.outputName), 'w', newline='') as csvfile:
             csv_columns = ['timestamp','value']
             writer = csv.writer(csvfile)
             writer.writerow(csv_columns)
             for data in self.socEnergyUsage.items():
                 writer.writerow(data)
 
-        with open('cap.csv', 'w', newline='') as csvfile:
+        with open('{0}_cap.csv'.format(self.outputName), 'w', newline='') as csvfile:
             csv_columns = ['timestamp','value']
             writer = csv.writer(csvfile)
             writer.writerow(csv_columns)
             for data in self.batteryCapacity.items():
                 writer.writerow(data)
 
-        with open('insolation.csv', 'w', newline='') as csvfile:
+        with open('{0}_insolation.csv'.format(self.outputName), 'w', newline='') as csvfile:
             csv_columns = ['timestamp','value']
             writer = csv.writer(csvfile)
             writer.writerow(csv_columns)
             for data in self.insolationData.items():
                 writer.writerow(data)
 
-        with open('op.csv', 'w', newline='') as csvfile:
+        with open('{0}_op.csv'.format(self.outputName), 'w', newline='') as csvfile:
             csv_columns = ['timestamp','value']
             writer = csv.writer(csvfile)
             writer.writerow(csv_columns)
             for data in self.isOperational.items():
                 writer.writerow(data)
         
-        with open('wind.csv', 'w', newline='') as csvfile:
+        with open('{0}_wind.csv'.format(self.outputName), 'w', newline='') as csvfile:
             csv_columns = ['timestamp','value']
             writer = csv.writer(csvfile)
             writer.writerow(csv_columns)
             for data in self.windData.items():
                 writer.writerow(data)
 
-        with open('traffic.csv', 'w', newline='') as csvfile:
+        with open('{0}_traffic.csv'.format(self.outputName), 'w', newline='') as csvfile:
             csv_columns = ['timestamp','value']
             writer = csv.writer(csvfile)
             writer.writerow(csv_columns)

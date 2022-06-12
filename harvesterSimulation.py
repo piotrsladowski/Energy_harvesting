@@ -43,6 +43,8 @@ class harvester():
     TURBINE_EFFICIENCY = 0.1
     TURBINE_RADIUS = 0.2
 
+    NUM_OF_VALUABLE_TRANSMISSIONS = 300
+
     capacity = 1 # Wh
     
     def __init__(self) -> None:
@@ -154,16 +156,20 @@ class harvester():
             print(style.YELLOW + "Starting reading wind data" + style.RESET)
             with open(self.windCSVFileName ,'r') as r_obj:
                 csv_reader = csv.reader(r_obj, delimiter=',')
-                for row in csv_reader:
-                    row_date = row[0]
-                    row_time = row[1]
-                    dateTime = row_date + "T" + row_time
-                    wind_speed = float(row[2])
-                    observationPeriodStart = datetime.strptime(dateTime, "%d-%m-%YT%H:%M").timestamp()
-                    timestampBetween = self.between(self.windDataKeys, observationPeriodStart, observationPeriodStart + self.windCSVResolution)
-                    for i in timestampBetween:
-                        acquiredEnergy = (math.pi / 2)*math.pow(self.TURBINE_RADIUS,2)*math.pow(wind_speed,3)*self.AIR_DENSITY*self.TURBINE_EFFICIENCY * (self.simulationStep / 3600)
-                        self.windData[i] = acquiredEnergy
+                try:
+                    for row in csv_reader:
+                        row_date = row[0]
+                        row_time = row[1]
+                        dateTime = row_date + "T" + row_time
+                        wind_speed = float(row[2])
+                        observationPeriodStart = datetime.strptime(dateTime, "%d-%m-%YT%H:%M").timestamp()
+                        timestampBetween = self.between(self.windDataKeys, observationPeriodStart, observationPeriodStart + self.windCSVResolution)
+                        for i in timestampBetween:
+                            acquiredEnergy = (math.pi / 2)*math.pow(self.TURBINE_RADIUS,2)*math.pow(wind_speed,3)*self.AIR_DENSITY*self.TURBINE_EFFICIENCY * (self.simulationStep / 3600)
+                            self.windData[i] = acquiredEnergy
+                except Exception:
+                        print(dateTime)
+
             print(style.GREEN + "Loaded wind data in {0} seconds.".format(time.time() - startTime) + style.RESET)
 
     def generateTraffic(self) -> None:
@@ -235,9 +241,13 @@ class harvester():
 
     def combineSources(self) -> None:
         queuedTransmissions = []
+        numOfDroppedPackets = 0
         startTime = time.time()
         print(style.YELLOW + "Data source merge started" + style.RESET)
         for i in range(self.simulationStart, self.simulationEnd + self.simulationStep, self.simulationStep):
+            if len(queuedTransmissions) > self.NUM_OF_VALUABLE_TRANSMISSIONS:
+                numOfDroppedPackets = numOfDroppedPackets + len(queuedTransmissions) - self.NUM_OF_VALUABLE_TRANSMISSIONS
+                queuedTransmissions = queuedTransmissions[-self.NUM_OF_VALUABLE_TRANSMISSIONS:]
             transmissionsBetween = self.between(self.trafficDataKeys, i, i + self.simulationStep)
             availableTime = self.simulationStep
             for t in transmissionsBetween:
@@ -272,6 +282,8 @@ class harvester():
                 self.batteryLvl[i + self.simulationStep] = self.batteryLvl[i] + relativeNewEnergy
         print('Transmissions queued at simulation end: {0}'.format(len(queuedTransmissions)))
         print(style.GREEN + "Data source merge ended in {0} seconds.".format(time.time() - startTime) + style.RESET)
+        print('Number of packets still in the queue: {0}'.format(len(queuedTransmissions)))
+        print('Number of dropped packets: {0}'.format(numOfDroppedPackets))
 
     def between(self, l1, low, high):
         l2 = []

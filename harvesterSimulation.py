@@ -166,6 +166,8 @@ class harvester():
                         timestampBetween = self.between(self.windDataKeys, observationPeriodStart, observationPeriodStart + self.windCSVResolution)
                         for i in timestampBetween:
                             acquiredEnergy = (math.pi / 2)*math.pow(self.TURBINE_RADIUS,2)*math.pow(wind_speed,3)*self.AIR_DENSITY*self.TURBINE_EFFICIENCY * (self.simulationStep / 3600)
+                            if acquiredEnergy > 1:
+                                acquiredEnergy = 1
                             self.windData[i] = acquiredEnergy
                 except Exception:
                         print(dateTime)
